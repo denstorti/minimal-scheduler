@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/rand"
+	"os"
 	"time"
 
 	"k8s.io/component-base/logs"
@@ -9,6 +10,9 @@ import (
 
 	"sigs.k8s.io/scheduler-plugins/pkg/trimaran/loadvariationriskbalancing"
 	"sigs.k8s.io/scheduler-plugins/pkg/trimaran/targetloadpacking"
+
+	// Ensure scheme package is initialized.
+	_ "sigs.k8s.io/scheduler-plugins/apis/config/scheme"
 )
 
 func main() {

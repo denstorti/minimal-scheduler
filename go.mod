@@ -3,36 +3,38 @@ module github.com/damemi/openshift-scheduler
 go 1.16
 
 require (
-	k8s.io/component-base v0.19.8
-	k8s.io/kubernetes v1.19.8
-	sigs.k8s.io/scheduler-plugins v0.0.0-00010101000000-000000000000
+	k8s.io/component-base v0.24.1
+	k8s.io/kubernetes v1.24.1
+	sigs.k8s.io/scheduler-plugins v0.22.7-0.20220502163913-7a6dcdc99b1e
 )
 
 replace (
-  // These all need to be pinned
-	k8s.io/api => k8s.io/api v0.19.8
-	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.19.8
-	k8s.io/apimachinery => k8s.io/apimachinery v0.19.8
-	k8s.io/apiserver => k8s.io/apiserver v0.19.8
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.19.8
-	k8s.io/client-go => k8s.io/client-go v0.19.8
-	k8s.io/cloud-provider => k8s.io/cloud-provider v0.19.8
-	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.19.8
-	k8s.io/code-generator => k8s.io/code-generator v0.19.8
-	k8s.io/component-base => k8s.io/component-base v0.19.8
-	k8s.io/cri-api => k8s.io/cri-api v0.19.8
-	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.19.8
-	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.19.8
-	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.19.8
-	k8s.io/kube-proxy => k8s.io/kube-proxy v0.19.8
-	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.19.8
-	k8s.io/kubectl => k8s.io/kubectl v0.19.8
-	k8s.io/kubelet => k8s.io/kubelet v0.19.8
-	k8s.io/kubernetes => k8s.io/kubernetes v1.19.8
-	k8s.io/legacy-cloud-providers => k8s.io/legacy-cloud-providers v0.19.8
-	k8s.io/metrics => k8s.io/metrics v0.19.8
-	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.19.8
+	// These all need to be pinned
+	k8s.io/api => k8s.io/api v0.24.1
+	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.24.1
+	k8s.io/apimachinery => k8s.io/apimachinery v0.24.1
+	k8s.io/apiserver => k8s.io/apiserver v0.24.1
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.24.1
+	k8s.io/client-go => k8s.io/client-go v0.24.1
+	k8s.io/cloud-provider => k8s.io/cloud-provider v0.24.1
+	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.24.1
+	k8s.io/code-generator => k8s.io/code-generator v0.24.1
+	k8s.io/component-base => k8s.io/component-base v0.24.1
+	k8s.io/component-helpers => k8s.io/component-helpers v0.24.1
+	k8s.io/controller-manager => k8s.io/controller-manager v0.24.1
+	k8s.io/cri-api => k8s.io/cri-api v0.24.1
+	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.24.1
+	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.24.1
+	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.24.1
+	k8s.io/kube-proxy => k8s.io/kube-proxy v0.24.1
+	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.24.1
+	k8s.io/kubectl => k8s.io/kubectl v0.24.1
+	k8s.io/kubelet => k8s.io/kubelet v0.24.1
+	k8s.io/kubernetes => k8s.io/kubernetes v1.24.1
+	k8s.io/legacy-cloud-providers => k8s.io/legacy-cloud-providers v0.24.1
+	k8s.io/metrics => k8s.io/metrics v0.24.1
+	k8s.io/mount-utils => k8s.io/mount-utils v0.24.1
+	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.24.1
+	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.24.1
 
-  // pinned to "master" branch of scheduler-plugins until they have a regular release cadence
-	sigs.k8s.io/scheduler-plugins => sigs.k8s.io/scheduler-plugins v0.19.9-0.20210324163409-268c1b71a08f
 )

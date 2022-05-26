@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,17 +34,19 @@ import (
 
 const (
 	// SignalFX Request Params
-	DefaultSignalFxAddress = "https://api.signalfx.com"
-	signalFxMetricsAPI     = "/v1/timeserieswindow"
-	// SignalFx adds a suffix to hostnames if configured
-	signalFxHostNameSuffix = ".group.region.gcp.com"
-	signalFxHostFilter     = "host:"
-
+	DefaultSignalFxAddress    = "https://api.signalfx.com"
+	signalFxMetricsAPI        = "/v1/timeserieswindow"
+	signalFxMetdataAPI        = "/v2/metrictimeseries"
+	signalFxHostFilter        = "host:"
+	signalFxClusterFilter     = "cluster:"
+	signalFxHostNameSuffixKey = "SIGNALFX_HOST_NAME_SUFFIX"
+	signalFxClusterName       = "SIGNALFX_CLUSTER_NAME"
 	// SignalFX Query Params
 	oneMinuteResolutionMs   = 60000
 	cpuUtilizationMetric    = `sf_metric:"cpu.utilization"`
 	memoryUtilizationMetric = `sf_metric:"memory.utilization"`
 	AND                     = "AND"
+	resultSetLimit          = "10000"
 
 	// Miscellaneous
 	httpClientTimeout = 55 * time.Second
@@ -53,6 +56,8 @@ type signalFxClient struct {
 	client          http.Client
 	authToken       string
 	signalFxAddress string
+	hostNameSuffix  string
+	clusterName     string
 }
 
 func NewSignalFxClient(opts watcher.MetricsProviderOpts) (watcher.MetricsProviderClient, error) {
@@ -60,9 +65,10 @@ func NewSignalFxClient(opts watcher.MetricsProviderOpts) (watcher.MetricsProvide
 		return nil, fmt.Errorf("metric provider name should be %v, found %v", watcher.SignalFxClientName, opts.Name)
 	}
 	tlsConfig := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // TODO(aqadeer): Figure out a secure way to let users add SSL certs
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.InsecureSkipVerify}, // TODO(aqadeer): Figure out a secure way to let users add SSL certs
 	}
-
+	hostNameSuffix, _ := os.LookupEnv(signalFxHostNameSuffixKey)
+	clusterName, _ := os.LookupEnv(signalFxClusterName)
 	var signalFxAddress, signalFxAuthToken = DefaultSignalFxAddress, ""
 	if opts.Address != "" {
 		signalFxAddress = opts.Address
@@ -77,7 +83,9 @@ func NewSignalFxClient(opts watcher.MetricsProviderOpts) (watcher.MetricsProvide
 		Timeout:   httpClientTimeout,
 		Transport: tlsConfig},
 		authToken:       signalFxAuthToken,
-		signalFxAddress: signalFxAddress}, nil
+		signalFxAddress: signalFxAddress,
+		hostNameSuffix:  hostNameSuffix,
+		clusterName:     clusterName}, nil
 }
 
 func (s signalFxClient) Name() string {
@@ -87,12 +95,12 @@ func (s signalFxClient) Name() string {
 func (s signalFxClient) FetchHostMetrics(host string, window *watcher.Window) ([]watcher.Metric, error) {
 	log.Debugf("fetching metrics for host %v", host)
 	var metrics []watcher.Metric
-	hostQuery := signalFxHostFilter + host + signalFxHostNameSuffix
-
+	hostFilter := signalFxHostFilter + host + s.hostNameSuffix
+	clusterFilter := signalFxClusterFilter + s.clusterName
 	for _, metric := range []string{cpuUtilizationMetric, memoryUtilizationMetric} {
-		uri, err := s.buildMetricURL(hostQuery, metric, window)
+		uri, err := s.buildMetricURL(hostFilter, clusterFilter, metric, window)
 		if err != nil {
-			return metrics, err
+			return metrics, fmt.Errorf("received error when building metric URL: %v", err)
 		}
 		req, _ := http.NewRequest(http.MethodGet, uri.String(), nil)
 		req.Header.Set("X-SF-Token", s.authToken)
@@ -100,7 +108,7 @@ func (s signalFxClient) FetchHostMetrics(host string, window *watcher.Window) ([
 
 		resp, err := s.client.Do(req)
 		if err != nil {
-			return metrics, err
+			return metrics, fmt.Errorf("received error in metric API call: %v", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -109,37 +117,136 @@ func (s signalFxClient) FetchHostMetrics(host string, window *watcher.Window) ([
 		var res interface{}
 		err = json.NewDecoder(resp.Body).Decode(&res)
 		if err != nil {
-			return metrics, err
+			return metrics, fmt.Errorf("received error in decoding resp: %v", err)
 		}
 
 		var fetchedMetric watcher.Metric
-		// Added default operator and rollup for signalfx client.
-		fetchedMetric.Operator = watcher.Average
-		fetchedMetric.Rollup = window.Duration
-		if metric == cpuUtilizationMetric {
-			fetchedMetric.Name = cpuUtilizationMetric
-			fetchedMetric.Type = watcher.CPU
-		} else {
-			fetchedMetric.Name = memoryUtilizationMetric
-			fetchedMetric.Type = watcher.Memory
-		}
+		addMetadata(&fetchedMetric, metric)
 		fetchedMetric.Value, err = decodeMetricsPayload(res)
 		if err != nil {
 			return metrics, err
 		}
 		metrics = append(metrics, fetchedMetric)
 	}
-
 	return metrics, nil
 }
 
-// TODO(aqadeer): Fetching metrics for all hosts is not possible currently via timeserieswindow SignalFx API
-func (s signalFxClient) FetchAllHostsMetrics(*watcher.Window) (map[string][]watcher.Metric, error) {
-	return nil, errors.New("This function is not yet implemented")
+func (s signalFxClient) FetchAllHostsMetrics(window *watcher.Window) (map[string][]watcher.Metric, error) {
+	hostFilter := signalFxHostFilter + "*" + s.hostNameSuffix
+	clusterFilter := signalFxClusterFilter + s.clusterName
+	metrics := make(map[string][]watcher.Metric)
+	for _, metric := range []string{cpuUtilizationMetric, memoryUtilizationMetric} {
+		uri, err := s.buildMetricURL(hostFilter, clusterFilter, metric, window)
+		if err != nil {
+			return metrics, fmt.Errorf("received error when building metric URL: %v", err)
+		}
+		req := s.requestWithAuthToken(uri.String())
+		metricResp, err := s.client.Do(req)
+		if err != nil {
+			return metrics, fmt.Errorf("received error in metric API call: %v", err)
+		}
+		defer metricResp.Body.Close()
+		if metricResp.StatusCode != http.StatusOK {
+			return metrics, fmt.Errorf("received status code for metric resp: %v", metricResp.StatusCode)
+		}
+		var metricPayload interface{}
+		err = json.NewDecoder(metricResp.Body).Decode(&metricPayload)
+		if err != nil {
+			return metrics, fmt.Errorf("received error in decoding resp: %v", err)
+		}
+
+		uri, err = s.buildMetadataURL(hostFilter, clusterFilter, metric)
+		if err != nil {
+			return metrics, fmt.Errorf("received error when building metadata URL: %v", err)
+		}
+		req = s.requestWithAuthToken(uri.String())
+		metadataResp, err := s.client.Do(req)
+		if err != nil {
+			return metrics, fmt.Errorf("received error in metadata API call: %v", err)
+		}
+		defer metadataResp.Body.Close()
+		if metadataResp.StatusCode != http.StatusOK {
+			return metrics, fmt.Errorf("received status code for metadata resp: %v", metadataResp.StatusCode)
+		}
+		var metadataPayload interface{}
+		err = json.NewDecoder(metadataResp.Body).Decode(&metadataPayload)
+		if err != nil {
+			return metrics, fmt.Errorf("received error in decoding metadata payload: %v", err)
+		}
+		mappedMetrics, err := getMetricsFromPayloads(metricPayload, metadataPayload)
+		if err != nil {
+			return metrics, fmt.Errorf("received error in getting metrics from payload: %v", err)
+		}
+		for k, v := range mappedMetrics {
+			addMetadata(&v, metric)
+			metrics[k] = append(metrics[k], v)
+		}
+	}
+	return metrics, nil
 }
 
-func (s signalFxClient) buildMetricURL(host string, metric string, window *watcher.Window) (uri *url.URL, err error) {
+func (s signalFxClient) Health() (int, error) {
+	return Ping(s.client, s.signalFxAddress)
+}
+
+func (s signalFxClient) requestWithAuthToken(uri string) *http.Request {
+	req, _ := http.NewRequest(http.MethodGet, uri, nil)
+	req.Header.Set("X-SF-Token", s.authToken)
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+// Simple ping utility to a given URL
+// Returns -1 if unhealthy, 0 if healthy along with error if any
+func Ping(client http.Client, url string) (int, error) {
+	req, err := http.NewRequest("HEAD", url, nil)
+	if err != nil {
+		return -1, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return -1, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return -1, fmt.Errorf("received response code: %v", resp.StatusCode)
+	}
+	return 0, nil
+}
+
+func addMetadata(metric *watcher.Metric, metricType string) {
+	metric.Operator = watcher.Average
+	if metricType == cpuUtilizationMetric {
+		metric.Name = cpuUtilizationMetric
+		metric.Type = watcher.CPU
+	} else {
+		metric.Name = memoryUtilizationMetric
+		metric.Type = watcher.Memory
+	}
+}
+
+func (s signalFxClient) buildMetricURL(hostFilter string, clusterFilter string, metric string, window *watcher.Window) (uri *url.URL, err error) {
 	uri, err = url.Parse(s.signalFxAddress + signalFxMetricsAPI)
+	if err != nil {
+		return nil, err
+	}
+	q := uri.Query()
+
+	builder := strings.Builder{}
+	builder.WriteString(hostFilter)
+	builder.WriteString(fmt.Sprintf(" %v ", AND))
+	builder.WriteString(clusterFilter)
+	builder.WriteString(fmt.Sprintf(" %v ", AND))
+	builder.WriteString(metric)
+	q.Set("query", builder.String())
+	q.Set("startMs", strconv.FormatInt(window.Start*1000, 10))
+	q.Set("endMs", strconv.FormatInt(window.End*1000, 10))
+	q.Set("resolution", strconv.Itoa(oneMinuteResolutionMs))
+	uri.RawQuery = q.Encode()
+	return
+}
+
+func (s signalFxClient) buildMetadataURL(host string, clusterFilter string, metric string) (uri *url.URL, err error) {
+	uri, err = url.Parse(s.signalFxAddress + signalFxMetdataAPI)
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +255,11 @@ func (s signalFxClient) buildMetricURL(host string, metric string, window *watch
 	builder := strings.Builder{}
 	builder.WriteString(host)
 	builder.WriteString(fmt.Sprintf(" %v ", AND))
+	builder.WriteString(clusterFilter)
+	builder.WriteString(fmt.Sprintf(" %v ", AND))
 	builder.WriteString(metric)
 	q.Set("query", builder.String())
-
-	q.Set("startMs", strconv.FormatInt(window.Start, 10))
-	q.Set("endMs", strconv.FormatInt(window.End, 10))
-	q.Set("resolution", strconv.Itoa(oneMinuteResolutionMs))
+	q.Set("limit", resultSetLimit)
 	uri.RawQuery = q.Encode()
 	return
 }
@@ -205,4 +311,157 @@ func decodeMetricsPayload(payload interface{}) (float64, error) {
 		return -1, errors.New("unable to deserialise metric values")
 	}
 	return timestampUtilisation[1].(float64), nil
+}
+
+/**
+Sample metricData payload:
+{
+  "data": {
+    "Ehql_bxBgAc": [
+      [
+        1600213380000,
+        84.64246793530153
+      ]
+    ],
+    "EuXgJm7BkAA": [
+	  [
+		1614634260000,
+		5.450946379084264
+     ]
+    ],
+    ....
+    ....
+  },
+  "errors": []
+}
+
+https://dev.splunk.com/observability/reference/api/metrics_metadata/latest#endpoint-retrieve-metric-timeseries-metadata
+Sample metaData payload:
+{
+    "count": 5,
+    "partialCount": false,
+    "results": [
+        {
+            "active": true,
+            "created": 1614534848000,
+            "creator": null,
+            "dimensions": {
+                "host": "test.dev.com",
+                "sf_metric": null
+            },
+        "id": "EvVH6P7BgAA",
+		"lastUpdated": 0,
+		"lastUpdatedBy": null,
+		"metric": "cpu.utilization"
+       },
+       ....
+       ....
+	]
+}
+*/
+func getMetricsFromPayloads(metricData interface{}, metadata interface{}) (map[string]watcher.Metric, error) {
+	keyHostMap := make(map[string]string)
+	hostMetricMap := make(map[string]watcher.Metric)
+	if _, ok := metadata.(map[string]interface{}); !ok {
+		return hostMetricMap, fmt.Errorf("type conversion failed, found %T", metadata)
+	}
+	results := metadata.(map[string]interface{})["results"]
+	if results == nil {
+		return hostMetricMap, errors.New("unexpected payload: missing results field")
+	}
+
+	for _, v := range results.([]interface{}) {
+		_, ok := v.(map[string]interface{})
+		if !ok {
+			log.Errorf("type conversion failed, found %T", v)
+			continue
+		}
+		id := v.(map[string]interface{})["id"]
+		if id == nil {
+			log.Errorf("id not found in %v", v)
+			continue
+		}
+		_, ok = id.(string)
+		if !ok {
+			log.Errorf("id not expected type string, found %T", id)
+			continue
+		}
+		dimensions := v.(map[string]interface{})["dimensions"]
+		if dimensions == nil {
+			log.Errorf("no dimensions found in %v", v)
+			continue
+		}
+		_, ok = dimensions.(map[string]interface{})
+		if !ok {
+			log.Errorf("type conversion failed, found %T", dimensions)
+			continue
+		}
+		host := dimensions.(map[string]interface{})["host"]
+		if host == nil {
+			log.Errorf("no host found in %v", dimensions)
+			continue
+		}
+		if _, ok := host.(string); !ok {
+			log.Errorf("host not expected type string, found %T", host)
+		}
+
+		keyHostMap[id.(string)] = extractHostName(host.(string))
+	}
+
+	var data interface{}
+	data = metricData.(map[string]interface{})["data"]
+	if data == nil {
+		return hostMetricMap, errors.New("unexpected payload: missing data field")
+	}
+	keyMetricMap, ok := data.(map[string]interface{})
+	if !ok {
+		return hostMetricMap, errors.New("unable to deserialise data field")
+	}
+	for key, metric := range keyMetricMap {
+		if _, ok := keyHostMap[key]; !ok {
+			log.Errorf("no metadata found for key %v", key)
+			continue
+		}
+		values, ok := metric.([]interface{})
+		if !ok {
+			log.Errorf("unable to deserialise values for key %v", key)
+			continue
+		}
+		if len(values) == 0 {
+			log.Errorf("no metric value array could be decoded for key %v", key)
+			continue
+		}
+		// Find the average across returned values per 1 minute resolution
+		var sum float64
+		var count float64
+		for _, value := range values {
+			var timestampUtilisation []interface{}
+			timestampUtilisation, ok = value.([]interface{})
+			if !ok || len(timestampUtilisation) < 2 {
+				log.Errorf("unable to deserialise metric values for key %v", key)
+				continue
+			}
+			if _, ok := timestampUtilisation[1].(float64); !ok {
+				log.Errorf("unable to typecast value to float64: %v of type %T", timestampUtilisation, timestampUtilisation)
+			}
+			sum += timestampUtilisation[1].(float64)
+			count += 1
+		}
+
+		fetchedMetric := watcher.Metric{Value: sum / count}
+		hostMetricMap[keyHostMap[key]] = fetchedMetric
+	}
+
+	return hostMetricMap, nil
+}
+
+// This function checks and extracts node name from its FQDN if present
+// It assumes that node names themselves don't contain "."
+// Example: alpha.dev.k8s.com is returned as alpha
+func extractHostName(fqdn string) string {
+	index := strings.Index(fqdn, ".")
+	if index != -1 {
+		return fqdn[:index]
+	}
+	return fqdn
 }

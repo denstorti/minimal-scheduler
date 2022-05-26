@@ -18,7 +18,8 @@ package cache
 
 import (
 	v1 "k8s.io/api/core/v1"
-	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
 // Cache collects pods' information and provides node-level aggregated information.
@@ -56,7 +57,12 @@ import (
 // - Both "Expired" and "Deleted" are valid end states. In case of some problems, e.g. network issue,
 //   a pod might have changed its state (e.g. added and deleted) without delivering notification to the cache.
 type Cache interface {
+	// NodeCount returns the number of nodes in the cache.
+	// DO NOT use outside of tests.
+	NodeCount() int
+
 	// PodCount returns the number of pods in the cache (including those from deleted nodes).
+	// DO NOT use outside of tests.
 	PodCount() (int, error)
 
 	// AssumePod assumes a pod scheduled and aggregates the pod's information into its node.
@@ -88,10 +94,12 @@ type Cache interface {
 	IsAssumedPod(pod *v1.Pod) (bool, error)
 
 	// AddNode adds overall information about node.
-	AddNode(node *v1.Node) error
+	// It returns a clone of added NodeInfo object.
+	AddNode(node *v1.Node) *framework.NodeInfo
 
 	// UpdateNode updates overall information about node.
-	UpdateNode(oldNode, newNode *v1.Node) error
+	// It returns a clone of updated NodeInfo object.
+	UpdateNode(oldNode, newNode *v1.Node) *framework.NodeInfo
 
 	// RemoveNode removes overall information about node.
 	RemoveNode(node *v1.Node) error
@@ -109,6 +117,6 @@ type Cache interface {
 
 // Dump is a dump of the cache state.
 type Dump struct {
-	AssumedPods map[string]bool
+	AssumedPods sets.String
 	Nodes       map[string]*framework.NodeInfo
 }

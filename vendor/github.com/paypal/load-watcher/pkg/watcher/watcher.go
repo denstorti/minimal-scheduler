@@ -37,6 +37,7 @@ import (
 
 const (
 	BaseUrl         = "/watcher"
+	HealthCheckUrl  = "/watcher/health"
 	FifteenMinutes  = "15m"
 	TenMinutes      = "10m"
 	FiveMinutes     = "5m"
@@ -99,7 +100,7 @@ type NodeMetrics struct {
 	Metadata Metadata `json:"metadata,omitempty"`
 }
 
-// Returns a new initialised Watcher
+// NewWatcher Returns a new initialised Watcher
 func NewWatcher(client MetricsProviderClient) *Watcher {
 	sizePerWindow := 5
 	return &Watcher{
@@ -113,7 +114,7 @@ func NewWatcher(client MetricsProviderClient) *Watcher {
 	}
 }
 
-// This function needs to be called to begin actual watching
+// StartWatching This function needs to be called to begin actual watching
 func (w *Watcher) StartWatching() {
 	w.mutex.RLock()
 	if w.isStarted {
@@ -153,6 +154,7 @@ func (w *Watcher) StartWatching() {
 	}
 
 	http.HandleFunc(BaseUrl, w.handler)
+	http.HandleFunc(HealthCheckUrl, w.healthCheckHandler)
 	server := &http.Server{
 		Addr:    ":2020",
 		Handler: http.DefaultServeMux,
@@ -176,15 +178,16 @@ func (w *Watcher) StartWatching() {
 	w.mutex.Lock()
 	w.isStarted = true
 	w.mutex.Unlock()
+	log.Info("Started watching metrics")
 }
 
-// StartWatching() should be called before calling this.
-// It starts from 15 minute window, and falls back to 10 min, 5 min windows subsequently if metrics are not present
+// GetLatestWatcherMetrics It starts from 15 minute window, and falls back to 10 min, 5 min windows subsequently
+// if metrics are not present. StartWatching() should be called before calling this.
 func (w *Watcher) GetLatestWatcherMetrics(duration string) (*WatcherMetrics, error) {
 	w.mutex.RLock()
 	defer w.mutex.RUnlock()
 	if !w.isStarted {
-		return nil, errors.New("need to call StartWatching() first!")
+		return nil, errors.New("need to call StartWatching() first")
 	}
 
 	switch {
@@ -295,6 +298,16 @@ func (w *Watcher) handler(resp http.ResponseWriter, r *http.Request) {
 		log.Error(err)
 		resp.WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+// Simple server status handler
+func (w *Watcher) healthCheckHandler(resp http.ResponseWriter, r *http.Request) {
+	if status, err := w.client.Health(); status != 0 {
+		log.Warnf("health check failed with: %v", err)
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	resp.WriteHeader(http.StatusOK)
 }
 
 // Utility functions

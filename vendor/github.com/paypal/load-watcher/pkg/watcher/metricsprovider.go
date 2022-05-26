@@ -16,7 +16,10 @@ limitations under the License.
 
 package watcher
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 const (
 	K8sClientName      = "KubernetesMetricsServer"
@@ -26,6 +29,7 @@ const (
 	MetricsProviderNameKey    = "METRICS_PROVIDER_NAME"
 	MetricsProviderAddressKey = "METRICS_PROVIDER_ADDRESS"
 	MetricsProviderTokenKey   = "METRICS_PROVIDER_TOKEN"
+	InsecureSkipVerify        = "INSECURE_SKIP_VERIFY"
 )
 
 var (
@@ -40,6 +44,12 @@ func init() {
 	}
 	EnvMetricProviderOpts.Address, ok = os.LookupEnv(MetricsProviderAddressKey)
 	EnvMetricProviderOpts.AuthToken, ok = os.LookupEnv(MetricsProviderTokenKey)
+	insecureVerify, _ := os.LookupEnv(InsecureSkipVerify)
+	if strings.ToLower(insecureVerify) == "true" {
+		EnvMetricProviderOpts.InsecureSkipVerify = true
+	} else {
+		EnvMetricProviderOpts.InsecureSkipVerify = false
+	}
 }
 
 // Interface to be implemented by any metrics provider client to interact with Watcher
@@ -50,11 +60,15 @@ type MetricsProviderClient interface {
 	FetchHostMetrics(host string, window *Window) ([]Metric, error)
 	// Fetch metrics for all hosts
 	FetchAllHostsMetrics(window *Window) (map[string][]Metric, error)
+	// Get metric provider server health status
+	// Returns 0 if healthy, -1 if unhealthy along with error if any
+	Health() (int, error)
 }
 
 // Generic metrics provider options
 type MetricsProviderOpts struct {
-	Name      string
-	Address   string
-	AuthToken string
+	Name               string
+	Address            string
+	AuthToken          string
+	InsecureSkipVerify bool
 }
